@@ -1808,7 +1808,7 @@ def render_end() -> None:
             reset_game(pack=st.session_state.pack_questions, pack_name=st.session_state.pack_name, pack_source=st.session_state.pack_source)
             st.rerun()
     with c2:
-        if st.button("Back to setup"):
+        if st.button("Back to setup", key="end_back_to_setup"):
             st.session_state.started = False
             st.rerun()
 
@@ -1866,7 +1866,7 @@ def main() -> None:
             reset_game(pack=st.session_state.pack_questions, pack_name=st.session_state.pack_name, pack_source=st.session_state.pack_source)
             st.rerun()
     with c2:
-        if st.button("Back to setup"):
+        if st.button("Back to setup", key="main_back_to_setup"):
             st.session_state.started = False
             st.rerun()
     with c3:
