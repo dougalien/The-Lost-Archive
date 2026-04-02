@@ -10,6 +10,11 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
 st.set_page_config(page_title="Contrabulator Quiz", page_icon="💎", layout="centered")
 
 APP_TITLE = "Contrabulator Quiz"
@@ -93,6 +98,103 @@ SURPRISES = [
     "For a second the room glows and the machine sounds almost repaired.",
     "A side drawer opens and closes on its own, as if the room approves of careful thinking.",
 ]
+
+
+STORY_SHELLS = [
+    {
+        "name": "Archive Drift",
+        "story_title_pool": ["The Wandering Archive", "The Quiet Index", "The Luminous Stack"],
+        "setting_name": "The Archive Annex",
+        "machine_name": "Contrabulator",
+        "machine_problem_pool": [
+            "Its learning lattice has slipped out of alignment.",
+            "Its calibration grid keeps losing whole ideas between rooms.",
+            "Its study circuits are active, but the organizing frame is unstable.",
+        ],
+        "intro_pool": [
+            "Tonight the building has reorganized itself around your topic.",
+            "The hallways seem to have been rebuilt from a chapter outline and a half-finished study guide.",
+            "The route is new, but the learning goal is the same: collect enough crystals to bring the machine back online.",
+        ],
+        "room_first_pool": [
+            "This room feels like it was assembled from the logic of {room}.",
+            "You step into a chamber tuned to {room}, with diagrams and fragments arranged just enough to be useful.",
+            "The room introduces itself through the language of {room}: labels, models, and just enough mystery to stay interesting.",
+        ],
+        "room_look_pool": [
+            "A margin note points back toward {room}, as if the building wants you to stay with the idea a little longer.",
+            "Shelves, sketches, and little cues keep nudging your attention toward {room}.",
+            "The room quietly reshapes around {room}, making the subject feel less abstract than it did a minute ago.",
+        ],
+        "surprise_pool": SURPRISES,
+    },
+    {
+        "name": "Field Station",
+        "story_title_pool": ["The Shifting Field Station", "Traverse of the Contrabulator", "The Study Traverse"],
+        "setting_name": "The North Ridge Field Station",
+        "machine_name": "Contrabulator",
+        "machine_problem_pool": [
+            "Its field sensors are collecting data, but the synthesis core will not lock in.",
+            "Its route engine keeps dropping key connections between ideas.",
+            "Its crystal channels are open, but the main interpretive unit still needs repair.",
+        ],
+        "intro_pool": [
+            "The station has laid out a fresh route through your material.",
+            "Each room feels like a subtopic stop on a careful traverse rather than a random maze.",
+            "Find enough crystals and the Contrabulator will turn this scattered route into one clean interpretation.",
+        ],
+        "room_first_pool": [
+            "This stop is built around {room}, with the feel of a focused field note station.",
+            "A compact work area opens up around {room}, like the chapter decided it needed its own outcrop stop.",
+            "You reach the {room} station, where the clues are practical, direct, and quietly demanding.",
+        ],
+        "room_look_pool": [
+            "The station keeps bringing you back to {room}, as if the whole run depends on understanding this stop clearly.",
+            "Short notes and tidy clues make {room} feel like a problem worth slowing down for.",
+            "The space around you keeps resolving into examples of {room}. Nothing flashy, just sharp and useful.",
+        ],
+        "surprise_pool": [
+            "A clipped field note appears on the table: good interpretation starts with careful observation.",
+            "A lamp flickers over a tiny schematic of the Contrabulator's crystal channels.",
+            "For a moment the station sounds steadier, as if your review is helping the machine remember its job.",
+            "A storage drawer clicks open and shut, leaving behind a note that says: one idea at a time works surprisingly well.",
+        ],
+    },
+    {
+        "name": "Observatory Wing",
+        "story_title_pool": ["The Observatory Wing", "Signals Through the Study Hall", "The Quiet Observatory"],
+        "setting_name": "The Observatory Complex",
+        "machine_name": "Contrabulator",
+        "machine_problem_pool": [
+            "Its signal array is active, but the interpretive core still cannot hold a full model together.",
+            "Its learning mirrors are aligned, yet the central reasoning engine keeps scattering the pattern.",
+            "Its relay system is awake, but the final synthesis chamber still needs crystal input.",
+        ],
+        "intro_pool": [
+            "A new run opens inside an observatory-like wing shaped by your question pack.",
+            "The building feels calm and technical, more interested in patterns than drama.",
+            "Repair the Contrabulator by finding enough crystals before the route runs dry.",
+        ],
+        "room_first_pool": [
+            "The room for {room} feels precise and almost instrument-like, as if the topic has been given its own quiet signal channel.",
+            "You enter a chamber tuned to {room}, where everything seems arranged to sharpen attention rather than overwhelm it.",
+            "This wing handles {room} with an orderly confidence: models, markers, and just enough tension to keep you alert.",
+        ],
+        "room_look_pool": [
+            "The room keeps returning to {room}, like a signal trying to resolve into a cleaner picture.",
+            "A few subtle cues make {room} feel newly connected to the rest of the run.",
+            "The space narrows your focus toward {room}, trimming away everything that does not matter right now.",
+        ],
+        "surprise_pool": [
+            "A status light turns from amber to blue for a second, then fades again.",
+            "A little console note appears: boredom is usually a design problem, not a student problem.",
+            "The room gives off a brief pulse of approval, like the machine recognized a useful pattern.",
+            "You catch a glimpse of the Contrabulator's frame map before it disappears back into the wall.",
+        ],
+    },
+]
+
+DEFAULT_STORY_GENERATION_MODE = "Template Story"
 
 DEMO_PACK = [
     {
@@ -491,6 +593,235 @@ def room_question_decks(grouped: Dict[str, List[Dict]], seed: int) -> Dict[str, 
         decks[room] = qlist
     return decks
 
+
+def safe_json_extract(text: str) -> Optional[Dict]:
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except Exception:
+            return None
+    return None
+
+
+def pack_subject_label(pack: List[Dict], source_name: str) -> str:
+    topics = [q.get("topic", "") for q in pack if q.get("topic")]
+    if topics:
+        counts = OrderedDict()
+        for topic in topics:
+            counts[topic] = counts.get(topic, 0) + 1
+        return sorted(counts.items(), key=lambda x: (-x[1], x[0]))[0][0]
+    return Path(source_name).stem.replace("_", " ").strip() or "your topic"
+
+
+def build_template_story_packet(seed: int, source_name: str, pack: List[Dict], rooms: List[str]) -> Dict:
+    rng = random.Random(seed + 700)
+    shell = rng.choice(STORY_SHELLS)
+    subject = pack_subject_label(pack, source_name)
+    room_texts = {}
+    for room in rooms:
+        room_texts[room] = {
+            "display_name": room,
+            "first_visit_text": rng.choice(shell["room_first_pool"]).format(room=room, subject=subject),
+            "look_text": [
+                rng.choice(shell["room_look_pool"]).format(room=room, subject=subject),
+                rng.choice(ROOM_FLAVOR),
+            ],
+        }
+    machine_name = shell.get("machine_name", "Contrabulator")
+    problem = rng.choice(shell["machine_problem_pool"])
+    story_title = rng.choice(shell["story_title_pool"])
+    return {
+        "story_title": story_title,
+        "setting_name": shell["setting_name"],
+        "machine_name": machine_name,
+        "machine_problem": problem,
+        "intro": [
+            rng.choice(shell["intro_pool"]),
+            f"This run is built from {subject}.",
+            f"Collect {suggest_crystals_needed(len(rooms))} crystals to repair the {machine_name}.",
+        ],
+        "room_texts": room_texts,
+        "events": {
+            "surprises": shell["surprise_pool"][:],
+            "question_intro": [
+                "A question stirs awake in this room.",
+                "The room decides to test you before it gives up any crystal energy.",
+                "A prompt resolves out of the wall display.",
+            ],
+            "correct": [
+                "Correct. The room settles into focus.",
+                "Correct. The Contrabulator's pattern holds a little longer.",
+                "Correct. Something important clicks into place.",
+            ],
+            "crystal": [
+                "A crystal lifts free from the room and joins your collection.",
+                "The room yields its crystal with a quiet flash of light.",
+                "You recover the room's crystal and the machine sounds steadier.",
+            ],
+            "already_cleared": [
+                "You already earned this room's crystal, but the answer still helps sharpen the run.",
+                "No new crystal this time, but the correct answer still strengthens your stats.",
+            ],
+            "wrong": [
+                "Not quite. The room tightens around the mistake.",
+                "Not quite. The route loses a little flexibility.",
+                "Not quite. The building seems to withdraw one easy option.",
+            ],
+            "blocked": [
+                "The {direction} exit locks with a low mechanical click.",
+                "A panel slides over the {direction} path and blocks it for this run.",
+                "The {direction} route goes dark and drops out of play.",
+            ],
+            "skip": [
+                "You let the question pass and keep moving. No crystal is earned.",
+                "You skip the prompt. The run continues, but the room keeps its crystal.",
+            ],
+            "quiet": [
+                "No question appears here right now. You can keep moving.",
+                "The room stays quiet for the moment. Nothing rises into view.",
+            ],
+            "win": [
+                f"The {machine_name} hums back to life. The run resolves cleanly.",
+                f"The final crystal clicks into place and the {machine_name} comes fully online.",
+            ],
+            "lost": [
+                f"There are not enough viable crystals left to repair the {machine_name} on this run.",
+                "This route runs out of options before the machine can be repaired.",
+            ],
+        },
+        "mode": "template",
+        "generation_label": "Template Story",
+        "subject": subject,
+    }
+
+
+def validate_story_packet(packet: Optional[Dict], rooms: List[str]) -> Optional[Dict]:
+    if not isinstance(packet, dict):
+        return None
+    required = {"story_title", "setting_name", "machine_name", "machine_problem", "intro", "room_texts", "events"}
+    if not required.issubset(packet.keys()):
+        return None
+    room_texts = packet.get("room_texts")
+    if not isinstance(room_texts, dict):
+        return None
+    for room in rooms:
+        if room not in room_texts:
+            return None
+        entry = room_texts[room]
+        if not isinstance(entry, dict):
+            return None
+        if not entry.get("display_name") or not entry.get("first_visit_text"):
+            return None
+        if not entry.get("look_text"):
+            return None
+    events = packet.get("events")
+    if not isinstance(events, dict):
+        return None
+    return packet
+
+
+def generate_ai_story_packet(seed: int, source_name: str, pack: List[Dict], rooms: List[str]) -> Optional[Dict]:
+    api_key = get_secret("OPENAI_API_KEY", "")
+    if not api_key or OpenAI is None:
+        return None
+    model = str(get_secret("STORY_PACKET_MODEL", "gpt-4.1-mini"))
+    subject = pack_subject_label(pack, source_name)
+    examples = []
+    for q in pack[:6]:
+        examples.append({"room": q["room"], "question": q["q"]})
+    prompt_data = {
+        "subject": subject,
+        "source_name": source_name,
+        "rooms": rooms,
+        "question_examples": examples,
+        "requirements": {
+            "short": True,
+            "school_friendly": True,
+            "no_corniness": True,
+            "no_answer_logic": True,
+            "do_not_write_questions": True,
+            "tone": "fresh, calm, motivating",
+        },
+    }
+    system = (
+        "You create short replay-friendly story packets for an educational quiz game. "
+        "Return JSON only. No markdown. Keep it concise, grounded, and school-friendly. "
+        "Do not generate quiz questions or alter academic correctness."
+    )
+    user = (
+        "Create JSON with keys: story_title, setting_name, machine_name, machine_problem, intro, room_texts, events. "
+        "intro must be a list of 3 short strings. machine_name should usually be Contrabulator. "
+        "room_texts must map each room name to an object with keys display_name, first_visit_text, look_text. "
+        "look_text must be a list of 2 short strings. Use the exact room names provided as keys. "
+        "events must include lists for surprises, question_intro, correct, crystal, already_cleared, wrong, blocked, skip, quiet, win, lost. "
+        "The blocked lines may include {direction}. Use short text. Data: " + json.dumps(prompt_data)
+    )
+    try:
+        client = OpenAI(api_key=api_key)
+        resp = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_output_tokens=1400,
+            temperature=0.95,
+        )
+        raw = getattr(resp, "output_text", "") or ""
+        packet = safe_json_extract(raw)
+        packet = validate_story_packet(packet, rooms)
+        if not packet:
+            return None
+        packet["mode"] = "ai"
+        packet["generation_label"] = "AI Story Packet"
+        packet["subject"] = subject
+        return packet
+    except Exception:
+        return None
+
+
+def build_story_packet(seed: int, source_name: str, pack: List[Dict], rooms: List[str], generation_mode: str) -> Dict:
+    template = build_template_story_packet(seed, source_name, pack, rooms)
+    if generation_mode == "AI Story Packet":
+        ai_packet = generate_ai_story_packet(seed, source_name, pack, rooms)
+        if ai_packet:
+            return ai_packet
+        template["mode"] = "template-fallback"
+        template["generation_label"] = "Template Story (AI fallback)"
+    return template
+
+
+def packet_line(options: List[str], salt: int = 0, default: str = "") -> str:
+    if not options:
+        return default
+    rng = random.Random((st.session_state.get("story_seed") or 0) + salt)
+    return rng.choice(options)
+
+
+def current_story_packet() -> Dict:
+    return st.session_state.get("story_packet", {}) or {}
+
+
+def packet_event_text(key: str, salt: int = 0, default: str = "") -> str:
+    packet = current_story_packet()
+    options = packet.get("events", {}).get(key, [])
+    return packet_line(options, salt=salt, default=default)
+
+
+def packet_room_info(room: str) -> Dict:
+    packet = current_story_packet()
+    room_texts = packet.get("room_texts", {})
+    return room_texts.get(room, {"display_name": room, "first_visit_text": f"You step into {room}.", "look_text": [random.choice(ROOM_FLAVOR)]})
+
 def suggest_crystals_needed(room_count: int) -> int:
     if room_count <= 4:
         return room_count
@@ -545,6 +876,8 @@ def ensure_state():
         "access_large_text": False,
         "story_started": False,
         "story_seed": None,
+        "story_generation_mode": DEFAULT_STORY_GENERATION_MODE,
+        "story_packet": {},
         "story_map": {},
         "story_rooms": [],
         "story_decks": {},
@@ -562,6 +895,7 @@ def ensure_state():
         "story_question_log": [],
         "story_status": "setup",
         "story_look_count": 0,
+        "story_room_looked_at": set(),
         "plain_started": False,
         "plain_deck": [],
         "plain_index": 0,
@@ -659,10 +993,13 @@ def render_setup():
             st.rerun()
     else:
         st.selectbox("Story difficulty", ["Easy", "Standard", "Difficult"], key="difficulty")
+        st.selectbox("Story generation", ["Template Story", "AI Story Packet"], key="story_generation_mode")
         st.markdown(
-            "<div class='card'><strong>Story Game</strong><br><span class='soft'>Move room to room with arrow buttons, look around for story beats, and answer room-linked questions to collect crystals and repair the Contrabulator.</span></div>",
+            "<div class='card'><strong>Story Game</strong><br><span class='soft'>Move room to room with arrow buttons, look around for story beats, and answer room-linked questions to collect crystals and repair the Contrabulator. AI mode uses one optional run-start call to freshen the story wrapper while keeping the grading engine fixed.</span></div>",
             unsafe_allow_html=True,
         )
+        if st.session_state.story_generation_mode == "AI Story Packet" and not get_secret("OPENAI_API_KEY", ""):
+            st.warning("AI Story Packet is selected, but OPENAI_API_KEY is missing. The app will fall back to Template Story for this run.")
         if st.button("Start story game", disabled=not bool(pack)):
             start_story_game()
             st.rerun()
@@ -727,7 +1064,9 @@ def start_story_game():
     grouped = group_by_room(pack)
     seed = random.randint(1000, 999999)
     story_map = build_story_map(rooms, seed)
+    story_packet = build_story_packet(seed, st.session_state.pack_source_name, pack, story_map["room_list"], st.session_state.story_generation_mode)
     st.session_state.story_seed = seed
+    st.session_state.story_packet = story_packet
     st.session_state.story_map = story_map
     st.session_state.story_rooms = rooms
     st.session_state.story_decks = room_question_decks(grouped, seed)
@@ -741,15 +1080,16 @@ def start_story_game():
     st.session_state.story_disabled_exits = {room: set() for room in rooms}
     st.session_state.story_pending_question = None
     st.session_state.story_question_active = False
-    st.session_state.story_log = [
+    st.session_state.story_log = story_packet.get("intro", [
         "The Contrabulator is broken.",
         "Each room represents a subtopic from your question pack.",
         "Find enough crystals by answering room-linked questions correctly and the machine will work again.",
-    ]
+    ])
     st.session_state.story_question_log = []
     st.session_state.story_status = "active"
     st.session_state.story_started = True
     st.session_state.story_look_count = 0
+    st.session_state.story_room_looked_at = set()
 
 def current_story_room() -> str:
     return st.session_state.story_current_room
@@ -761,13 +1101,18 @@ def room_has_questions(room: str) -> bool:
     return len(st.session_state.story_decks.get(room, [])) > 0
 
 def random_story_flavor(room: str) -> str:
-    rng = random.Random(st.session_state.story_seed + st.session_state.story_look_count + len(room))
-    return rng.choice(ROOM_FLAVOR)
+    info = packet_room_info(room)
+    look_text = info.get("look_text", [])
+    if isinstance(look_text, str):
+        look_text = [look_text]
+    if look_text:
+        return packet_line(look_text, salt=st.session_state.story_look_count + len(room), default=random.choice(ROOM_FLAVOR))
+    return packet_line(ROOM_FLAVOR, salt=st.session_state.story_look_count + len(room), default=ROOM_FLAVOR[0])
 
 def maybe_story_surprise() -> Optional[str]:
     rng = random.Random(st.session_state.story_seed + st.session_state.story_look_count * 11)
-    if rng.random() < 0.22:
-        return rng.choice(SURPRISES)
+    if rng.random() < 0.26:
+        return packet_event_text("surprises", salt=st.session_state.story_look_count * 3, default=random.choice(SURPRISES))
     return None
 
 def look_around():
@@ -775,13 +1120,18 @@ def look_around():
         return
     room = current_story_room()
     st.session_state.story_look_count += 1
-    st.session_state.story_log.append(f"You look around {room}. {random_story_flavor(room)}")
+    info = packet_room_info(room)
+    if room not in st.session_state.story_room_looked_at:
+        st.session_state.story_room_looked_at.add(room)
+        st.session_state.story_log.append(info.get("first_visit_text", f"You look around {room}."))
+    else:
+        st.session_state.story_log.append(f"You look around {info.get('display_name', room)}. {random_story_flavor(room)}")
     surprise = maybe_story_surprise()
     if surprise:
         st.session_state.story_log.append(surprise)
 
     if not room_has_questions(room):
-        st.session_state.story_log.append("No question appears here right now. You can keep moving.")
+        st.session_state.story_log.append(packet_event_text("quiet", salt=st.session_state.story_look_count * 5, default="No question appears here right now. You can keep moving."))
         return
 
     chance = 0.60 if not room_cleared(room) else 0.35
@@ -790,9 +1140,9 @@ def look_around():
         q = st.session_state.story_decks[room].pop(0)
         st.session_state.story_pending_question = q
         st.session_state.story_question_active = True
-        st.session_state.story_log.append(f"A question appears in {room}.")
+        st.session_state.story_log.append(packet_event_text("question_intro", salt=st.session_state.story_look_count * 7, default=f"A question appears in {room}."))
     else:
-        st.session_state.story_log.append("The room stays quiet for now. No question appears.")
+        st.session_state.story_log.append(packet_event_text("quiet", salt=st.session_state.story_look_count * 13, default="The room stays quiet for now. No question appears."))
 
 def disable_one_exit(room: str) -> Optional[str]:
     exits = st.session_state.story_map["exits"].get(room, {})
@@ -813,21 +1163,24 @@ def answer_story(choice_index: int):
     correct = choice_index == q["a"]
     if correct:
         new_crystal = room not in st.session_state.story_room_clear
+        st.session_state.story_log.append(packet_event_text("correct", salt=len(st.session_state.story_question_log) * 5, default="Correct."))
         if new_crystal:
             st.session_state.story_room_clear.add(room)
             st.session_state.story_crystals_found += 1
-            st.session_state.story_log.append(f"Correct. You earn the crystal from {room}.")
+            st.session_state.story_log.append(packet_event_text("crystal", salt=st.session_state.story_crystals_found * 17, default=f"You earn the crystal from {room}."))
         else:
-            st.session_state.story_log.append("Correct. You already found this room's crystal, but the answer still counts in your stats.")
+            st.session_state.story_log.append(packet_event_text("already_cleared", salt=len(room), default="You already found this room's crystal, but the answer still counts in your stats."))
         st.session_state.story_log.append(q["explain"])
         result = "correct"
     else:
         st.session_state.story_wrong_answers += 1
+        st.session_state.story_log.append(packet_event_text("wrong", salt=st.session_state.story_wrong_answers * 7, default="Not quite."))
         blocked = disable_one_exit(current_story_room())
         if blocked:
-            st.session_state.story_log.append(f"Not quite. The {blocked.upper()} exit is now blocked from this room.")
+            block_msg = packet_event_text("blocked", salt=st.session_state.story_wrong_answers * 19, default=f"The {blocked} exit is now blocked from this room.")
+            st.session_state.story_log.append(block_msg.format(direction=blocked.upper()))
         else:
-            st.session_state.story_log.append("Not quite. No more exits can be removed safely from this room.")
+            st.session_state.story_log.append("No more exits can be removed safely from this room.")
         st.session_state.story_log.append(q["explain"])
         result = "wrong"
 
@@ -839,10 +1192,10 @@ def answer_story(choice_index: int):
 
     if st.session_state.story_crystals_found >= st.session_state.story_crystals_needed:
         st.session_state.story_status = "won"
-        st.session_state.story_log.append("The Contrabulator whirs back to life. You repaired it.")
+        st.session_state.story_log.append(packet_event_text("win", salt=st.session_state.story_crystals_found * 23, default="The Contrabulator whirs back to life. You repaired it."))
     elif st.session_state.story_wrong_answers >= st.session_state.story_wrong_limit:
         st.session_state.story_status = "lost"
-        st.session_state.story_log.append("There are not enough crystals left to repair the Contrabulator on this run. Restart and try a new path.")
+        st.session_state.story_log.append(packet_event_text("lost", salt=st.session_state.story_wrong_answers * 29, default="There are not enough crystals left to repair the Contrabulator on this run. Restart and try a new path."))
 
 def skip_story_question():
     q = st.session_state.story_pending_question
@@ -851,7 +1204,7 @@ def skip_story_question():
     st.session_state.story_question_log.append(
         {"question": q["q"], "room": q["room"], "result": "skipped", "answer_text": q["answer_text"], "explain": q["explain"]}
     )
-    st.session_state.story_log.append("You skip the question and move on. No crystal is earned.")
+    st.session_state.story_log.append(packet_event_text("skip", salt=len(st.session_state.story_question_log) * 11, default="You skip the question and move on. No crystal is earned."))
     st.session_state.story_pending_question = None
     st.session_state.story_question_active = False
 
@@ -870,7 +1223,8 @@ def move_story(direction: str):
     new_room = exits[direction]
     st.session_state.story_current_room = new_room
     st.session_state.story_visited_rooms.add(new_room)
-    st.session_state.story_log.append(f"You move {direction.upper()} into {new_room}.")
+    display_name = packet_room_info(new_room).get("display_name", new_room)
+    st.session_state.story_log.append(f"You move {direction.upper()} into {display_name}.")
     st.session_state.story_question_active = False
     st.session_state.story_pending_question = None
 
@@ -900,8 +1254,16 @@ def render_story_map():
 def render_story_header():
     room = current_story_room()
     grouped = group_by_room(st.session_state.pack)
+    packet = current_story_packet()
+    info = packet_room_info(room)
+    title = info.get("display_name", room)
+    subtitle = f"This room draws from {len(grouped.get(room, []))} question(s) in your pack."
     st.markdown(
-        f"<div class='card'><strong>{room}</strong><br><span class='soft'>This room draws from {len(grouped.get(room, []))} question(s) in your pack.</span></div>",
+        f"<div class='card'><strong>{packet.get('story_title', 'Story Run')}</strong><br><span class='soft'>{packet.get('setting_name', 'Story setting')} · {packet.get('machine_problem', 'The Contrabulator needs repair.')}</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<div class='card'><strong>{title}</strong><br><span class='soft'>{subtitle}</span></div>",
         unsafe_allow_html=True,
     )
     c1, c2, c3, c4 = st.columns(4)
@@ -909,6 +1271,10 @@ def render_story_header():
     c2.metric("Wrong", f"{st.session_state.story_wrong_answers}/{st.session_state.story_wrong_limit}")
     c3.metric("Rooms visited", len(st.session_state.story_visited_rooms))
     c4.metric("Questions used", len(st.session_state.story_question_log))
+    st.markdown(
+        f"<div class='small'>Story mode: {packet.get('generation_label', 'Template Story')} · Subject: {packet.get('subject', st.session_state.pack_source_name)}</div>",
+        unsafe_allow_html=True,
+    )
 
 def render_story_log():
     lines = st.session_state.story_log[-6:]
@@ -963,7 +1329,7 @@ def render_story_question():
         return
     st.markdown("---")
     st.markdown(
-        f"<div class='card'><strong>Question from {q['room']}</strong><br><span class='soft'>A correct answer earns the room crystal if you have not already collected it.</span></div>",
+        f"<div class='card'><strong>Question from {packet_room_info(q['room']).get('display_name', q['room'])}</strong><br><span class='soft'>A correct answer earns the room crystal if you have not already collected it.</span></div>",
         unsafe_allow_html=True,
     )
     st.write(q["q"])
@@ -1014,7 +1380,8 @@ def render_story_game():
     inject_accessibility_css()
     st.title(APP_TITLE)
     render_brand_banner()
-    st.caption("Story mode: move through topic rooms, look around, answer random room-linked questions, and repair the Contrabulator.")
+    packet = current_story_packet()
+    st.caption(f"Story mode: move through topic rooms, look around, answer random room-linked questions, and repair the {packet.get('machine_name', 'Contrabulator')}.")
     render_story_header()
     render_story_map()
     render_story_log()
@@ -1026,16 +1393,17 @@ def render_story_game():
             st.subheader("Move")
             render_story_movement()
     elif st.session_state.story_status == "won":
-        st.success("You repaired the Contrabulator. Nicely done.")
+        st.success(packet_event_text("win", salt=997, default="You repaired the Contrabulator. Nicely done."))
         render_story_summary()
     elif st.session_state.story_status == "lost":
-        st.info("This run ran out of viable crystals. Restart and try again.")
+        st.info(packet_event_text("lost", salt=1997, default="This run ran out of viable crystals. Restart and try again."))
         render_story_summary()
 
     with st.expander("Run details"):
         st.write(f"Pack: {st.session_state.pack_source_name}")
         st.write(f"Rooms: {', '.join(st.session_state.story_rooms)}")
         st.write(f"Seed: {st.session_state.story_seed}")
+        st.write(f"Story packet: {packet.get('generation_label', 'Template Story')}")
     render_brand_footer()
 
 def render_plain_quiz():
