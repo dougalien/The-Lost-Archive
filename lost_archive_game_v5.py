@@ -972,6 +972,9 @@ def render_setup():
     st.title(APP_TITLE)
     render_brand_banner()
     st.caption("One app, two modes: a plain quiz for straightforward review and a story game that uses room-based subtopics.")
+    desired_setup_mode = st.session_state.get("app_mode", "Plain Quiz")
+    if st.session_state.get("setup_app_mode") != desired_setup_mode:
+        st.session_state["setup_app_mode"] = desired_setup_mode
     st.text_input("Player name", key="player_name", placeholder="Doug")
     mode_choice = st.radio("Mode", ["Plain Quiz", "Story Game"], key="setup_app_mode", horizontal=True)
 
@@ -1033,7 +1036,6 @@ def filtered_plain_pack(pack: List[Dict]) -> List[Dict]:
 
 def start_plain_quiz():
     st.session_state.app_mode = "Plain Quiz"
-    st.session_state.setup_app_mode = "Plain Quiz"
     st.session_state.plain_filter_room = st.session_state.get("setup_plain_filter_room", "All rooms")
     st.session_state.question_count = st.session_state.get("setup_question_count", 10)
     st.session_state.story_started = False
@@ -1075,7 +1077,6 @@ def answer_plain(choice_index: int):
 
 def start_story_game():
     st.session_state.app_mode = "Story Game"
-    st.session_state.setup_app_mode = "Story Game"
     st.session_state.difficulty = st.session_state.get("setup_difficulty", "Standard")
     st.session_state.story_generation_mode = st.session_state.get("setup_story_generation_mode", DEFAULT_STORY_GENERATION_MODE)
     st.session_state.plain_started = False
@@ -1319,7 +1320,6 @@ def render_story_actions():
             st.session_state.story_started = False
             st.session_state.story_status = "setup"
             st.session_state.app_mode = "Story Game"
-            st.session_state.setup_app_mode = "Story Game"
             st.rerun()
 
 def render_story_movement():
@@ -1458,7 +1458,6 @@ def render_plain_quiz():
                 st.session_state.plain_started = False
                 st.session_state.plain_status = "setup"
                 st.session_state.app_mode = "Plain Quiz"
-                st.session_state.setup_app_mode = "Plain Quiz"
                 st.rerun()
     else:
         summary = summarize_results(st.session_state.plain_results)
@@ -1502,7 +1501,6 @@ def render_plain_quiz():
                 st.session_state.plain_started = False
                 st.session_state.plain_status = "setup"
                 st.session_state.app_mode = "Plain Quiz"
-                st.session_state.setup_app_mode = "Plain Quiz"
                 st.rerun()
     render_brand_footer()
 
