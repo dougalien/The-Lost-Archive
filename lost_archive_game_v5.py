@@ -827,6 +827,22 @@ def suggest_crystals_needed(room_count: int) -> int:
         return room_count
     return min(6, room_count)
 
+
+def story_difficulty_settings(room_count: int, difficulty: str) -> Dict[str, int]:
+    base_crystals = suggest_crystals_needed(room_count)
+    difficulty = (difficulty or "Standard").strip()
+    if difficulty == "Easy":
+        needed = max(3, base_crystals - 1) if room_count > 3 else room_count
+        wrong_limit = 5
+    elif difficulty == "Difficult":
+        needed = min(room_count, base_crystals + 1)
+        wrong_limit = 3
+    else:
+        needed = base_crystals
+        wrong_limit = 4
+    return {"crystals_needed": needed, "wrong_limit": wrong_limit}
+
+
 def summarize_results(log: List[Dict]) -> Dict:
     attempts = len([x for x in log if x["result"] in {"correct", "wrong"}])
     correct = len([x for x in log if x["result"] == "correct"])
@@ -1004,7 +1020,7 @@ def render_setup():
         st.selectbox("Story difficulty", ["Easy", "Standard", "Difficult"], key="setup_difficulty")
         st.selectbox("Story generation", ["Template Story", "AI Story Packet"], key="setup_story_generation_mode")
         st.markdown(
-            "<div class='card'><strong>Story Game</strong><br><span class='soft'>Move room to room with arrow buttons, look around for story beats, and answer room-linked questions to collect crystals and repair the Contrabulator. AI mode uses one optional run-start call to freshen the story wrapper while keeping the grading engine fixed.</span></div>",
+            "<div class='card'><strong>Story Game</strong><br><span class='soft'>Move room to room with arrow buttons. Each room entry delivers a short story beat and one room-linked question so the game keeps a steady quiz rhythm. AI mode uses one optional run-start call to freshen the story wrapper while keeping the grading engine fixed.</span></div>",
             unsafe_allow_html=True,
         )
         if st.session_state.get("setup_story_generation_mode", DEFAULT_STORY_GENERATION_MODE) == "AI Story Packet" and not get_secret("OPENAI_API_KEY", ""):
@@ -1084,6 +1100,7 @@ def start_story_game():
     seed = random.randint(1000, 999999)
     story_map = build_story_map(rooms, seed)
     story_packet = build_story_packet(seed, st.session_state.pack_source_name, pack, story_map["room_list"], st.session_state.story_generation_mode)
+    settings = story_difficulty_settings(len(rooms), st.session_state.difficulty)
     st.session_state.story_seed = seed
     st.session_state.story_packet = story_packet
     st.session_state.story_map = story_map
@@ -1093,9 +1110,9 @@ def start_story_game():
     st.session_state.story_visited_rooms = {story_map["start_room"]}
     st.session_state.story_room_clear = set()
     st.session_state.story_wrong_answers = 0
-    st.session_state.story_wrong_limit = 3
+    st.session_state.story_wrong_limit = settings["wrong_limit"]
     st.session_state.story_crystals_found = 0
-    st.session_state.story_crystals_needed = suggest_crystals_needed(len(rooms))
+    st.session_state.story_crystals_needed = settings["crystals_needed"]
     st.session_state.story_disabled_exits = {room: set() for room in rooms}
     st.session_state.story_pending_question = None
     st.session_state.story_question_active = False
@@ -1109,6 +1126,7 @@ def start_story_game():
     st.session_state.story_started = True
     st.session_state.story_look_count = 0
     st.session_state.story_room_looked_at = set()
+    enter_story_room(story_map["start_room"], initial=True)
 
 def current_story_room() -> str:
     return st.session_state.story_current_room
@@ -1119,60 +1137,93 @@ def room_cleared(room: str) -> bool:
 def room_has_questions(room: str) -> bool:
     return len(st.session_state.story_decks.get(room, [])) > 0
 
-def random_story_flavor(room: str) -> str:
+
+def random_story_flavor(room: str, salt: int = 0) -> str:
     info = packet_room_info(room)
     look_text = info.get("look_text", [])
     if isinstance(look_text, str):
         look_text = [look_text]
     if look_text:
-        return packet_line(look_text, salt=st.session_state.story_look_count + len(room), default=random.choice(ROOM_FLAVOR))
-    return packet_line(ROOM_FLAVOR, salt=st.session_state.story_look_count + len(room), default=ROOM_FLAVOR[0])
+        return packet_line(look_text, salt=salt + len(room), default=random.choice(ROOM_FLAVOR))
+    return packet_line(ROOM_FLAVOR, salt=salt + len(room), default=ROOM_FLAVOR[0])
 
-def maybe_story_surprise() -> Optional[str]:
-    rng = random.Random(st.session_state.story_seed + st.session_state.story_look_count * 11)
-    if rng.random() < 0.26:
-        return packet_event_text("surprises", salt=st.session_state.story_look_count * 3, default=random.choice(SURPRISES))
+
+def maybe_story_surprise(salt: int = 0) -> Optional[str]:
+    rng = random.Random(st.session_state.story_seed + salt)
+    if rng.random() < 0.22:
+        return packet_event_text("surprises", salt=salt * 3, default=random.choice(SURPRISES))
     return None
 
-def look_around():
+
+def next_story_question_for_room(room: str) -> Optional[Dict]:
+    deck = st.session_state.story_decks.setdefault(room, [])
+    if deck:
+        return deck.pop(0)
+
+    grouped = group_by_room(st.session_state.pack)
+    refill = [dict(q) for q in grouped.get(room, [])]
+    if not refill:
+        return None
+
+    rng = random.Random(
+        st.session_state.story_seed
+        + len(st.session_state.story_question_log) * 17
+        + len(room) * 7
+    )
+    rng.shuffle(refill)
+
+    last_question = None
+    for item in reversed(st.session_state.story_question_log):
+        if item.get("room") == room:
+            last_question = item.get("question")
+            break
+    if last_question and len(refill) > 1 and refill[0].get("q") == last_question:
+        refill.append(refill.pop(0))
+
+    st.session_state.story_decks[room] = refill
+    return st.session_state.story_decks[room].pop(0)
+
+
+def enter_story_room(room: str, direction: Optional[str] = None, initial: bool = False):
     if st.session_state.story_status != "active":
         return
-    room = current_story_room()
-    st.session_state.story_look_count += 1
+
+    st.session_state.story_current_room = room
+    st.session_state.story_visited_rooms.add(room)
     info = packet_room_info(room)
-    if room not in st.session_state.story_room_looked_at:
-        st.session_state.story_room_looked_at.add(room)
-        st.session_state.story_log.append(info.get("first_visit_text", f"You look around {room}."))
+    display_name = info.get("display_name", room)
+    entry_count = sum(1 for item in st.session_state.story_question_log if item.get("room") == room)
+    salt = len(st.session_state.story_question_log) + len(st.session_state.story_log) + len(room)
+
+    if initial:
+        st.session_state.story_log.append(f"You enter {display_name}.")
+        st.session_state.story_log.append(info.get("first_visit_text", f"You step into {display_name}."))
+    elif room not in st.session_state.story_room_looked_at:
+        st.session_state.story_log.append(f"You move {direction.upper()} into {display_name}.")
+        st.session_state.story_log.append(info.get("first_visit_text", f"You step into {display_name}."))
     else:
-        st.session_state.story_log.append(f"You look around {info.get('display_name', room)}. {random_story_flavor(room)}")
-    surprise = maybe_story_surprise()
+        st.session_state.story_log.append(f"You move {direction.upper()} into {display_name}.")
+        st.session_state.story_log.append(random_story_flavor(room, salt=salt + entry_count))
+
+    st.session_state.story_room_looked_at.add(room)
+
+    surprise = maybe_story_surprise(salt=salt + entry_count * 5)
     if surprise:
         st.session_state.story_log.append(surprise)
 
-    if not room_has_questions(room):
-        st.session_state.story_log.append(packet_event_text("quiet", salt=st.session_state.story_look_count * 5, default="No question appears here right now. You can keep moving."))
+    q = next_story_question_for_room(room)
+    if q is None:
+        st.session_state.story_pending_question = None
+        st.session_state.story_question_active = False
+        st.session_state.story_log.append(packet_event_text("quiet", salt=salt * 7, default="This room is quiet for the moment. Move on when you are ready."))
         return
 
-    chance = 0.60 if not room_cleared(room) else 0.35
-    rng = random.Random(st.session_state.story_seed + st.session_state.story_look_count * 17 + len(room))
-    if rng.random() <= chance:
-        q = st.session_state.story_decks[room].pop(0)
-        st.session_state.story_pending_question = q
-        st.session_state.story_question_active = True
-        st.session_state.story_log.append(packet_event_text("question_intro", salt=st.session_state.story_look_count * 7, default=f"A question appears in {room}."))
-    else:
-        st.session_state.story_log.append(packet_event_text("quiet", salt=st.session_state.story_look_count * 13, default="The room stays quiet for now. No question appears."))
+    st.session_state.story_pending_question = q
+    st.session_state.story_question_active = True
+    st.session_state.story_log.append(packet_event_text("question_intro", salt=salt * 11, default=f"A question appears in {display_name}."))
 
 def disable_one_exit(room: str) -> Optional[str]:
-    exits = st.session_state.story_map["exits"].get(room, {})
-    blocked = st.session_state.story_disabled_exits.get(room, set())
-    candidates = [d for d in exits.keys() if d not in blocked]
-    if len(candidates) <= 1:
-        return None
-    rng = random.Random(st.session_state.story_seed + st.session_state.story_wrong_answers * 31 + len(room))
-    direction = rng.choice(candidates)
-    st.session_state.story_disabled_exits[room].add(direction)
-    return direction
+    return None
 
 def answer_story(choice_index: int):
     q = st.session_state.story_pending_question
@@ -1194,12 +1245,7 @@ def answer_story(choice_index: int):
     else:
         st.session_state.story_wrong_answers += 1
         st.session_state.story_log.append(packet_event_text("wrong", salt=st.session_state.story_wrong_answers * 7, default="Not quite."))
-        blocked = disable_one_exit(current_story_room())
-        if blocked:
-            block_msg = packet_event_text("blocked", salt=st.session_state.story_wrong_answers * 19, default=f"The {blocked} exit is now blocked from this room.")
-            st.session_state.story_log.append(block_msg.format(direction=blocked.upper()))
-        else:
-            st.session_state.story_log.append("No more exits can be removed safely from this room.")
+        st.session_state.story_log.append("No crystal is earned from this room on this try, but you can keep moving and recover elsewhere.")
         st.session_state.story_log.append(q["explain"])
         result = "wrong"
 
@@ -1240,12 +1286,9 @@ def move_story(direction: str):
         st.warning(f"The {direction.upper()} exit is blocked from this room.")
         return
     new_room = exits[direction]
-    st.session_state.story_current_room = new_room
-    st.session_state.story_visited_rooms.add(new_room)
-    display_name = packet_room_info(new_room).get("display_name", new_room)
-    st.session_state.story_log.append(f"You move {direction.upper()} into {display_name}.")
     st.session_state.story_question_active = False
     st.session_state.story_pending_question = None
+    enter_story_room(new_room, direction=direction)
 
 def render_story_map():
     room_positions = st.session_state.story_map["room_positions"]
@@ -1282,7 +1325,7 @@ def render_story_header():
         unsafe_allow_html=True,
     )
     st.markdown(
-        f"<div class='card'><strong>{title}</strong><br><span class='soft'>{subtitle}</span></div>",
+        f"<div class='card'><strong>{title}</strong><br><span class='soft'>{subtitle} · Difficulty: {st.session_state.difficulty}</span></div>",
         unsafe_allow_html=True,
     )
     c1, c2, c3, c4 = st.columns(4)
@@ -1303,16 +1346,12 @@ def render_story_log():
     st.markdown("</div>", unsafe_allow_html=True)
 
 def render_story_actions():
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
-        if st.button("Look Around"):
-            look_around()
-            st.rerun()
-    with c2:
-        if st.button("Restart Game"):
+        if st.button("Restart Run"):
             start_story_game()
             st.rerun()
-    with c3:
+    with c2:
         if st.button("Back to Setup", key="story_back_setup"):
             st.session_state.story_started = False
             st.session_state.story_status = "setup"
@@ -1349,7 +1388,7 @@ def render_story_question():
         return
     st.markdown("---")
     st.markdown(
-        f"<div class='card'><strong>Question from {packet_room_info(q['room']).get('display_name', q['room'])}</strong><br><span class='soft'>A correct answer earns the room crystal if you have not already collected it.</span></div>",
+        f"<div class='card'><strong>Question from {packet_room_info(q['room']).get('display_name', q['room'])}</strong><br><span class='soft'>This move's question can earn the room crystal if you have not already collected it.</span></div>",
         unsafe_allow_html=True,
     )
     st.write(q["q"])
@@ -1360,16 +1399,19 @@ def render_story_question():
         if submitted and answer is not None:
             answer_story(q["choices"].index(answer))
             st.rerun()
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Skip Question"):
-            skip_story_question()
-            st.rerun()
-    with c2:
-        if st.button("Cancel Question"):
-            st.session_state.story_pending_question = None
-            st.session_state.story_question_active = False
-            st.rerun()
+    if st.button("Skip Question"):
+        skip_story_question()
+        st.rerun()
+
+def story_congratulations_message() -> str:
+    name = (st.session_state.get("player_name") or "").strip()
+    prefix = f"Congratulations, {name}." if name else "Congratulations."
+    summary = summarize_results(st.session_state.story_question_log)
+    return (
+        f"{prefix} You repaired the {current_story_packet().get('machine_name', 'Contrabulator')} "
+        f"with {st.session_state.story_crystals_found} crystal(s) and finished with {summary['accuracy']}% accuracy."
+    )
+
 
 def render_story_summary():
     summary = summarize_results(st.session_state.story_question_log)
@@ -1401,7 +1443,7 @@ def render_story_game():
     st.title(APP_TITLE)
     render_brand_banner()
     packet = current_story_packet()
-    st.caption(f"Story mode: move through topic rooms, look around, answer random room-linked questions, and repair the {packet.get('machine_name', 'Contrabulator')}.")
+    st.caption(f"Story mode: move through topic rooms, get an automatic story beat on entry, answer one room-linked question each move, and repair the {packet.get('machine_name', 'Contrabulator')}.")
     render_story_header()
     render_story_map()
     render_story_log()
@@ -1411,9 +1453,11 @@ def render_story_game():
             render_story_question()
         else:
             st.subheader("Move")
+            st.caption("Choose a direction. Entering the next room will automatically advance the story and open the next question.")
             render_story_movement()
     elif st.session_state.story_status == "won":
-        st.success(packet_event_text("win", salt=997, default="You repaired the Contrabulator. Nicely done."))
+        st.success(story_congratulations_message())
+        st.info(packet_event_text("win", salt=997, default="The Contrabulator is repaired and the route resolves cleanly."))
         render_story_summary()
     elif st.session_state.story_status == "lost":
         st.info(packet_event_text("lost", salt=1997, default="This run ran out of viable crystals. Restart and try again."))
@@ -1458,7 +1502,7 @@ def render_plain_quiz():
                 st.rerun()
     else:
         summary = summarize_results(st.session_state.plain_results)
-        st.success("Quiz complete.")
+        st.markdown("### Results")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Attempted", summary["attempts"])
         c2.metric("Accuracy", f"{summary['accuracy']}%")
