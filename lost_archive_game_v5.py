@@ -26,6 +26,21 @@ BANNER_FILENAMES = [
     "lost_archive_banner.jpg",
     "lost_archive_banner.jpeg",
     "lost_archive_banner.webp",
+    "the_lost_archive_banner.png",
+    "the_lost_archive_banner.jpg",
+    "the_lost_archive_banner.jpeg",
+    "the_lost_archive_banner.webp",
+    "lost-archive-banner.png",
+    "lost-archive-banner.jpg",
+    "lost-archive-banner.jpeg",
+    "lost-archive-banner.webp",
+]
+
+BANNER_SEARCH_DIRS = [
+    ".",
+    "images",
+    "assets",
+    "media",
 ]
 
 CSS = """
@@ -1015,6 +1030,8 @@ def render_setup():
     st.title(APP_TITLE)
     render_brand_banner()
     st.caption("One app, two modes: a plain quiz for straightforward review and a story game that uses room-based subtopics.")
+    if find_banner_file() is None:
+        st.info("Banner not found yet. Put the image in the same folder as this app, or in images/, assets/, or media/. A good filename is lost_archive_banner.png.")
     st.text_input("Player name", key="player_name", placeholder="Doug")
     mode_choice = st.radio("Mode", ["Plain Quiz", "Story Game"], key="setup_app_mode", horizontal=True)
 
