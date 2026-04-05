@@ -15,11 +15,18 @@ try:
 except Exception:
     OpenAI = None
 
-st.set_page_config(page_title="Contrabulator Quiz", page_icon="💎", layout="centered")
+st.set_page_config(page_title="The Lost Archive", page_icon="💎", layout="centered")
 
-APP_TITLE = "Contrabulator Quiz"
+APP_TITLE = "The Lost Archive"
 GRID_W = 4
 GRID_H = 4
+
+BANNER_FILENAMES = [
+    "lost_archive_banner.png",
+    "lost_archive_banner.jpg",
+    "lost_archive_banner.jpeg",
+    "lost_archive_banner.webp",
+]
 
 CSS = """
 <style>
@@ -81,6 +88,9 @@ html, body, [class*="css"]  {
     font-size: 1.15rem;
     line-height: 1.42;
     text-align: center;
+}
+.app-banner-wrap {
+    margin-bottom: 0.55rem;
 }
 </style>
 """
@@ -348,6 +358,21 @@ def render_brand_banner():
         f"<div class='small' style='text-align:center; margin-bottom:0.5rem;'><strong>We are dougalien</strong> · {contact_email()}</div>",
         unsafe_allow_html=True,
     )
+
+def find_banner_file() -> Optional[Path]:
+    app_dir = Path(__file__).resolve().parent
+    for name in BANNER_FILENAMES:
+        candidate = app_dir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+def render_app_banner():
+    banner_path = find_banner_file()
+    if banner_path:
+        st.markdown("<div class='app-banner-wrap'>", unsafe_allow_html=True)
+        st.image(str(banner_path), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def slugify(text: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in text).strip("-")
@@ -941,6 +966,7 @@ def render_accessibility_controls():
 def render_login():
     st.markdown(CSS, unsafe_allow_html=True)
     inject_accessibility_css()
+    render_app_banner()
     st.title(APP_TITLE)
     render_brand_banner()
     st.caption("Enter the app password to continue.")
@@ -985,6 +1011,7 @@ def render_pack_preview(pack: List[Dict], source_name: str):
 def render_setup():
     st.markdown(CSS, unsafe_allow_html=True)
     inject_accessibility_css()
+    render_app_banner()
     st.title(APP_TITLE)
     render_brand_banner()
     st.caption("One app, two modes: a plain quiz for straightforward review and a story game that uses room-based subtopics.")
@@ -1440,6 +1467,7 @@ def render_story_summary():
 def render_story_game():
     st.markdown(CSS, unsafe_allow_html=True)
     inject_accessibility_css()
+    render_app_banner()
     st.title(APP_TITLE)
     render_brand_banner()
     packet = current_story_packet()
@@ -1473,6 +1501,7 @@ def render_story_game():
 def render_plain_quiz():
     st.markdown(CSS, unsafe_allow_html=True)
     inject_accessibility_css()
+    render_app_banner()
     st.title(APP_TITLE)
     render_brand_banner()
     st.caption("Plain quiz mode: simple review with immediate feedback and a clean summary.")
